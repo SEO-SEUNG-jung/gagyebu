@@ -330,7 +330,15 @@ const ui = { tab: lsGet(K_TAB) || 'dash', year: +lsGet(K_YEAR) || doc.meta.year 
 if (!TABS.some(t => t[0] === ui.tab)) ui.tab = 'dash';
 
 function cacheDoc() { lsSet(K_DOC, JSON.stringify(doc)); lsSet(K_DIRTY, dirty ? '1' : '0'); }
+// 자산 자동 계산(2026-10-09 사용자 요청): 총자산의 주식 = 월별요약 저축·투자 「주식투자」+「주식투자(ISA)」 누계,
+// 코인 = 「코인투자」 누계 + 작년 이월 365만원. 저장할 때마다 자산 금액을 맞춰 두어 목표·홈도 같은 값을 읽음. 자산 이름을 바꾸면 자동 계산이 멈춤
+const AUTO_ASSETS = [{ name: '주식', items: ['주식투자', '주식투자(ISA)'], base: 0 }, { name: '코인', items: ['코인투자'], base: 3650000 }];
+const autoRule = r => r && r.side === '자산' ? AUTO_ASSETS.find(x => x.name === r.name) : null;
+const autoAmount = x => x.base + live('savings').filter(s => x.items.includes(s.item)).reduce((a, s) => a + (+s.amount || 0), 0);
+const autoText = x => '자동: ' + x.items.join(' + ') + ' 누계' + (x.base ? ` + 작년 이월 ${won(x.base)}` : '');
+function syncAutoAssets() { for (const r of live('assets')) { const x = autoRule(r); if (x) { const v = autoAmount(x); if ((+r.amount || 0) !== v) put('assets', Object.assign({}, r, { amount: v })); } } }
 function commit(rerender = true) {
+  syncAutoAssets();
   dirty = true; cacheDoc(); setStatus();
   clearTimeout(saveT); saveT = setTimeout(saveNow, 700);
   if (rerender) setTimeout(render, 0);
@@ -1094,7 +1102,7 @@ VIEWS.asset = () => {
     for (const g of groups) {
       const gr = rows.filter(r => r.group === g), sum = gr.reduce((a, r) => a + (+r.amount || 0), 0);
       h += `<tr class="blk"><td>${esc(g || '기타')}</td><td class="num">${won(sum)}</td><td></td></tr>`;
-      h += gr.map(r => `<tr><td>${esc(r.name)}${r.memo ? `<div class="muted" style="font-size:11px">${esc(assetMemo(r))}</div>` : ''}</td><td class="num"><input class="cell" data-fk="assets:${esc(r.id)}:amount" value="${won(r.amount)}"></td><td><button class="sm" data-act="assetEdit" data-id="${esc(r.id)}">수정</button></td></tr>`).join('');
+      h += gr.map(r => { const x = autoRule(r); return `<tr><td>${esc(r.name)}${x ? `<div class="muted" style="font-size:11px">${esc(autoText(x))}</div>` : ''}${r.memo ? `<div class="muted" style="font-size:11px">${esc(assetMemo(r))}</div>` : ''}</td><td class="num">${x ? won(r.amount) : `<input class="cell" data-fk="assets:${esc(r.id)}:amount" value="${won(r.amount)}">`}</td><td><button class="sm" data-act="assetEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
     }
     const tot = s === '자산' ? nw.a : nw.l;
     return `<div class="card"><h2>${s === '자산' ? '② 총자산' : '③ 총부채'} <small>잔액을 바로 고치면 자동 저장</small></h2>
