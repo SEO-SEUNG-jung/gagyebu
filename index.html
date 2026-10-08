@@ -575,6 +575,64 @@ function netWorth() {
   for (const r of live('assets')) { const v = +r.amount || 0; if (r.side === '부채') { l += v; if (r.group === '카드 미결제') card += v; } else a += v; }
   return { a, l, net: a - l, card };
 }
+/* ---- 업무관리(번영손해사정) 연결: 사업 입금액 (읽기만 함, 업무관리 데이터는 절대 쓰지 않음) ---- */
+const K_WPATH = 'gagyebu.workPath', WORK_DEFAULT = '/번영손해사정/번영손해사정_데이터.json';
+let work = null, workAt = 0, workSrc = '';
+async function loadWork(force) {
+  if (!force && work && Date.now() - workAt < 300000) return false;
+  const sig = w => w ? JSON.stringify([(w.meta || {}).rev, (w.meta || {}).savedAtIso, (w.cases || []).length]) : '';
+  const before = sig(work) + workSrc;
+  let d = null, src = '';
+  try {
+    if (store && store.kind === 'ms') {
+      const p = lsGet(K_WPATH) || WORK_DEFAULT;
+      const r = await gfetch('/me/drive/root:' + p.split('/').map(encodeURIComponent).join('/'));
+      if (r.ok) { const j = await r.json(); const c = await fetch(j['@microsoft.graph.downloadUrl'], { cache: 'no-store' }); const x = JSON.parse(await c.text()); if (x && Array.isArray(x.cases)) { d = x; src = 'OneDrive 업무관리'; } }
+    }
+  } catch (e) { }
+  if (!d) { try { const x = JSON.parse(lsGet('byeongyoung_adjust_v1') || 'null'); if (x && Array.isArray(x.cases)) { d = x; src = '이 기기에서 연 업무관리'; } } catch (e) { } }
+  if (!d) return false;
+  work = d; workAt = Date.now(); workSrc = src;
+  return sig(work) + workSrc !== before;
+}
+// 연도별 월 사업 입금액 (입금일 기준). inc = VAT·기타 포함 실제 입금, fee = 그중 수수료. 업무관리 대시보드의 입금액과 같은 기준
+function workPaid(Y) {
+  if (!work) return null;
+  const inc = Array(13).fill(0), fee = Array(13).fill(0), ys = String(Y);
+  for (const c of work.cases || []) for (const b of c.billings || []) {
+    const t = (b.fee || 0) + (b.vat || 0) + (b.extra || 0);
+    if (!b.paidDate || !t || !b.paidDate.startsWith(ys)) continue;
+    const m = +b.paidDate.slice(5, 7); inc[m] += t; inc[0] += t; fee[m] += b.fee || 0; fee[0] += b.fee || 0;
+  }
+  return { inc, fee };
+}
+function cashChart(inc, out, W = 1100) {
+  const H = W < 600 ? 240 : 280, L = 56, R = 10, T = 14, B = 40, pw = W - L - R, ph = H - T - B;
+  let mx = 1; for (let m = 1; m <= 12; m++) mx = Math.max(mx, inc[m], out[m]);
+  mx = niceMax(mx * 1.05); const y = v => T + ph - v / mx * ph, band = pw / 12, bw = band * .32;
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="월별 사업 입금과 지출">`;
+  for (let i = 0; i <= 4; i++) { const v = mx * i / 4, yy = y(v); s += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text x="${L - 6}" y="${yy + 4}" text-anchor="end">${man(v)}</text>`; }
+  for (let m = 1; m <= 12; m++) {
+    const x0 = L + band * (m - 1) + band / 2 - bw - 1;
+    if (inc[m] > 0) s += `<rect x="${x0}" y="${y(inc[m])}" width="${bw}" height="${y(0) - y(inc[m])}" fill="var(--c4)"><title>${m}월 사업 입금 ${won(inc[m])}원</title></rect>`;
+    if (out[m] > 0) s += `<rect x="${x0 + bw + 2}" y="${y(out[m])}" width="${bw}" height="${y(0) - y(out[m])}" fill="var(--c3)"><title>${m}월 총 현금유출 ${won(out[m])}원</title></rect>`;
+    const cx = L + band * (m - 1) + band / 2, d = inc[m] - out[m];
+    s += `<text x="${cx}" y="${H - 22}" text-anchor="middle">${m}월</text>`;
+    if (out[m]) s += `<text x="${cx}" y="${H - 6}" text-anchor="middle" style="fill:${d >= 0 ? 'var(--pos)' : 'var(--neg)'};font-weight:600">${d >= 0 ? '+' : '−'}${man(Math.abs(d))}</text>`;
+  }
+  return s + '</svg>';
+}
+function cashCard(Y, A) {
+  const W = workPaid(Y);
+  if (!W) return `<div class="card" style="margin-top:16px"><h2>⑤ 월별 현금흐름 <small>사업 입금 vs 지출</small></h2><p class="muted">업무관리 데이터를 아직 불러오지 못했습니다. 휴대폰·인터넷 주소에서는 자동으로 읽고, PC에서는 이 PC에서 업무관리를 한 번 열면 보입니다. <button class="link" data-act="go" data-tab="set">설정 →</button></p></div>`;
+  const act = A.active, incA = act.reduce((s, m) => s + W.inc[m], 0), net = incA - A.out[0];
+  const span = act.length ? (act.length === 1 ? `${act[0]}월` : `${act[0]}~${act[act.length - 1]}월`) : "";
+  return `<div class="card" style="margin-top:16px"><h2>⑤ 월별 현금흐름 <small>${Y}년 · 업무관리 입금(입금일 기준, VAT 포함) vs 가계부 총 현금유출(지출+저축·투자)</small></h2>
+    <div class="legend"><span><i style="background:var(--c4)"></i>사업 입금</span><span><i style="background:var(--c3)"></i>총 현금유출</span><span>아래 숫자: 입금 − 유출 (가계부 기록이 있는 달만)</span>
+      <span style="margin-left:auto;color:var(--text)">${span ? `가계부 기록이 있는 ${span} 누계` : "누계"}: 입금 <b>${won(incA)}</b> − 유출 <b>${won(A.out[0])}</b> = <b class="${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${won(net)}</b></span></div>
+    <div id="cashBox">${cashChart(W.inc, A.out)}</div>
+    <p class="help" style="margin:6px 0 0">사업 입금에는 부가세가 들어 있고, 부가세·소득세 납부는 가계부의 「세금」 지출로 빠져나갑니다. 사업 경비는 가계부의 사업비용 항목으로 잡힙니다. 월별 숫자는 「월별요약」 맨 아래 「Ⅴ. 사업 입금」에서 볼 수 있습니다.</p></div>`;
+}
 // 유동성: 유동현금(예금 + 현금 + 마이너스통장 잔액), 투자자산, 금월 카드 미결제(카드 미결제 중 이름에 「금월」)
 function liquidity() {
   const o = { dep: 0, cash: 0, minus: 0, inv: 0, cardNow: 0, cardItems: [] };
@@ -664,6 +722,8 @@ AFTER.dash = () => {
   const box = $("#stackBox"); if (!box) return;
   const A = compute(ui.year), w = Math.max(320, Math.round(box.clientWidth));
   if (w) box.innerHTML = stackChart(A, +doc.meta.budget || 0, w);
+  const cb = $("#cashBox"), W = workPaid(ui.year);
+  if (cb && W) { const cw = Math.max(320, Math.round(cb.clientWidth)); if (cw) cb.innerHTML = cashChart(W.inc, A.out, cw); }
 };
 let dashResizeT = null;
 window.addEventListener("resize", () => { clearTimeout(dashResizeT); dashResizeT = setTimeout(() => { if (ui.tab === "dash") AFTER.dash(); }, 150); });
@@ -748,7 +808,8 @@ VIEWS.dash = () => {
   </div>
   <div class="row" style="margin-top:16px">
     ${upcomingCard(Y, cm)}
-  </div>`;
+  </div>
+  ${cashCard(Y, A)}`;
 };
 
 /* ====================== 화면: 지출내역 ====================== */
@@ -922,6 +983,13 @@ VIEWS.month = () => {
   body += line('월 생활예산', bud, '') + `<tr><td>예산 대비 (+초과 / −절감)</td>${[...M, 0].map(m => `<td class="num ${diff[m] > 0 ? 'neg' : diff[m] < 0 ? 'pos' : 'dim'}">${diff[m] ? (diff[m] > 0 ? '+' : '') + won(diff[m]) : '-'}</td>`).join('')}</tr>`;
   body += `<tr><td>예산 집행률</td>${[...M, 0].map(m => `<td class="num ${bud[m] && A.life[m] > bud[m] ? 'neg' : ''}">${bud[m] ? (A.life[m] / bud[m] * 100).toFixed(1) + '%' : '-'}</td>`).join('')}</tr>`;
   body += line('총지출 (Ⅰ+Ⅱ+Ⅲ)', A.total) + line('총 현금유출 (Ⅰ+Ⅱ+Ⅲ+Ⅳ)', A.out);
+  const WP = workPaid(Y);
+  body += `<tr class="blk"><td colspan="14">Ⅴ. 사업 입금 <span class="muted" style="font-weight:400">(업무관리에서 가져옴 · 입금일 기준)</span></td></tr>`;
+  if (WP) {
+    const cash = WP.inc.map((v, m) => m === 0 ? A.active.reduce((s, k) => s + WP.inc[k], 0) - A.out[0] : (A.total[m] > 0 ? v - A.out[m] : 0));
+    body += line('사업 입금액 (VAT 포함)', WP.inc, '') + line('그중 수수료', WP.fee, '');
+    body += `<tr class="tot"><td>현금흐름 (입금 − 총 현금유출, 가계부 기록 있는 달)</td>${[...M, 0].map(m => `<td class="num ${cash[m] > 0 ? 'pos' : cash[m] < 0 ? 'neg' : 'dim'}">${cash[m] ? (cash[m] > 0 ? '+' : '') + won(cash[m]) : '-'}</td>`).join('')}</tr>`;
+  } else body += `<tr><td colspan="14" class="dim">업무관리 데이터를 아직 불러오지 못했습니다 (설정 탭 「업무관리 연결」 참고)</td></tr>`;
   return `<div class="card"><h2>월별 요약 <small>${Y}년 · 대분류 × 월 · 금액을 누르면 해당 내역으로 이동 · 저축·투자 칸은 직접 입력</small></h2>
     <div class="tablewrap"><table class="grid compact sticky-first fit">${head}<tbody>${body}</tbody></table></div></div>`;
 };
@@ -1184,6 +1252,10 @@ VIEWS.set = () => {
       <p class="help">OneDrive가 「가계부_데이터-PC이름.json」 같은 충돌 사본을 만들었다면 「백업·충돌 사본 합치기」로 불러오세요. 빠진 내용 없이 합쳐집니다.</p>
     </div>
   </div>
+  <div class="card"><h2>업무관리 연결 <small>번영손해사정 · 읽기만 함</small></h2>
+    <p class="help">${work ? `불러옴: ${esc(workSrc)} · 사건 ${(work.cases || []).length}건${(work.meta || {}).savedAtIso ? ` · 업무관리 마지막 저장 ${esc(String(work.meta.savedAtIso).slice(0, 16).replace('T', ' '))}` : ''}` : '아직 업무관리 데이터를 불러오지 못했습니다.'}<br>업무관리의 입금 기록(입금일 기준)을 읽어 대시보드 「⑤ 월별 현금흐름」과 월별요약 「Ⅴ. 사업 입금」에 보여 줍니다. 업무관리 데이터는 고치지 않습니다.${storeMode() === 'ms' ? '' : '<br>PC에서는 이 PC에서 마지막으로 연 업무관리 내용을 씁니다.'}</p>
+    <div class="toolbar">${storeMode() === 'ms' ? `<span class="hint">업무관리 파일 위치</span><input id="workPath" value="${esc(lsGet(K_WPATH) || WORK_DEFAULT)}" style="flex:1;min-width:200px"><button data-act="saveWorkPath">바꾸기</button>` : ''}<button data-act="workReload">다시 불러오기</button></div>
+  </div>
   <div class="card"><h2>대분류 <small>블록은 월별요약·대시보드의 고정/변동/특별 구분 · 이름을 바꾸면 기존 내역도 함께 바꿀 수 있습니다</small></h2>
     <div class="tablewrap"><table class="grid"><thead><tr><th>이름</th><th>블록</th><th>포함 내용(메모)</th><th class="num">사용</th><th></th></tr></thead><tbody>${catRows}</tbody></table></div>
     <div class="addline" style="margin-top:10px"><input id="newCat" placeholder="새 대분류 이름"><select id="newCatBlock">${opts(BLOCKS.map(([b, l]) => [b, l]), '변동')}</select><button data-act="catAdd">추가</button></div>
@@ -1263,6 +1335,8 @@ const ACT = {
   chipAdd: b => { const k = b.dataset.key, el = $('#add-' + k), v = el.value.trim(); if (!v) return; if ((doc.meta[k] || []).includes(v)) { toast('이미 있습니다'); return; } setMeta(m => { (m[k] = m[k] || []).push(v); }); commit(); },
   backup: () => download(`가계부_백업_${todayStr()}.json`, JSON.stringify(doc), 'application/json'),
   importMerge: () => $('#importFile').click(),
+  saveWorkPath: () => { const v = $('#workPath').value.trim(); if (!v) return; lsSet(K_WPATH, v.startsWith('/') ? v : '/' + v); ACT.workReload(); },
+  workReload: async () => { await loadWork(true); render(); toast(work ? '업무관리 데이터를 다시 불러왔습니다' : '업무관리 데이터를 찾지 못했습니다'); },
   useMode: b => { const m = b.dataset.mode; if (m === storeMode()) return; lsSet(K_MODE, m); store = null; connected = false; lastErr = ''; renderBanner(); setStatus(); render(); connect(); },
   msLogout: () => { if (confirm('Microsoft 계정에서 로그아웃할까요? (입력한 내용은 OneDrive에 저장되어 있습니다)')) msLogout(); },
   savePath: () => { const v = $('#msPath').value.trim(); if (!v) return; lsSet(K_PATH, v.startsWith('/') ? v : '/' + v); store = null; connected = false; lastErr = ''; renderBanner(); setStatus(); render(); connect(); },
@@ -1323,8 +1397,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.edit &&
     }
   }
   renderBanner(); setStatus(); if (ui.tab === 'set') render();
+  if (await loadWork(true)) safeRender();
+  setInterval(async () => { if (!document.hidden && await loadWork()) safeRender(); }, 60000);
 })();
-window.__gagyebu = { load: d => { doc = normalize(d); renderYear(); render(); }, get doc() { return doc; } };
+window.__gagyebu = { load: d => { doc = normalize(d); renderYear(); render(); }, get doc() { return doc; }, setWork: d => { work = d; workAt = Date.now(); workSrc = 'test'; render(); } };
 </script>
 </body>
 </html>
