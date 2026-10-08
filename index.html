@@ -987,7 +987,7 @@ VIEWS.month = () => {
   body += `<tr class="blk"><td colspan="14">Ⅴ. 사업 입금 <span class="muted" style="font-weight:400">(업무관리에서 가져옴 · 입금일 기준)</span></td></tr>`;
   if (WP) {
     const cash = WP.inc.map((v, m) => m === 0 ? A.active.reduce((s, k) => s + WP.inc[k], 0) - A.out[0] : (A.total[m] > 0 ? v - A.out[m] : 0));
-    body += line('사업 입금액 (VAT 포함)', WP.inc, '') + line('그중 수수료', WP.fee, '');
+    body += line('사업 입금액 (VAT 포함)', WP.inc, '');
     body += `<tr class="tot"><td>현금흐름 (입금 − 총 현금유출, 가계부 기록 있는 달)</td>${[...M, 0].map(m => `<td class="num ${cash[m] > 0 ? 'pos' : cash[m] < 0 ? 'neg' : 'dim'}">${cash[m] ? (cash[m] > 0 ? '+' : '') + won(cash[m]) : '-'}</td>`).join('')}</tr>`;
   } else body += `<tr><td colspan="14" class="dim">업무관리 데이터를 아직 불러오지 못했습니다 (설정 탭 「업무관리 연결」 참고)</td></tr>`;
   return `<div class="card"><h2>월별 요약 <small>${Y}년 · 대분류 × 월 · 금액을 누르면 해당 내역으로 이동 · 저축·투자 칸은 직접 입력</small></h2>
