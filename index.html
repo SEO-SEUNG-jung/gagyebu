@@ -1175,15 +1175,20 @@ function editAsset(id, side) {
    나갈 돈 = 생활지출(고정+변동) + 연간예상 특별비용(그 달 항목) + 그 밖의 특별비용 + 저축·투자 + 직접 넣는 기타 지출
    가정값(생활지출·그 밖의 특별비용·저축·투자)은 비워 두면 최근 3개월 실제 평균을 씀.
    저장: meta.flow = { life, other, sav (비우면 null = 자동), inc: {'YYYY-MM': 금액}, out: {'YYYY-MM': 금액} } */
-const FLOW_N = 6;
+const FLOW_N = 6, FLOW_BIG = 1e7;
 const ymAdd = (ym, n) => { const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + n, 1); return d.getFullYear() + '-' + pad(d.getMonth() + 1); };
 function flowBase() {
   const now = todayStr().slice(0, 7), cache = {}, A = y => cache[y] || (cache[y] = compute(y));
   const ann = m => live('annual').filter(r => +r.month === m).reduce((s, r) => s + (+(r.cur || r.prev) || 0), 0);
-  const recent = []; // 이번 달 전까지 가계부 기록이 있는 가장 최근 3개월
-  for (let i = 1; i <= 24 && recent.length < 3; i++) { const ym = ymAdd(now, -i), a = A(+ym.slice(0, 4)), m = +ym.slice(5, 7); if (a.total[m] > 0) recent.push({ ym, life: a.life[m], other: Math.max(0, a.blk.특별[m] - ann(m)), sav: a.sav[m] }); }
+  const recent = [], big = []; // 이번 달 전까지 가계부 기록이 있는 가장 최근 3개월
+  // 한 번에 FLOW_BIG 이상인 특별지출(차량 구입 같은 일회성)은 「그 밖의 특별비용」 평균에서 뺌 (2026-10-09 사용자: 9월 캐스퍼 구입)
+  for (let i = 1; i <= 24 && recent.length < 3; i++) {
+    const ym = ymAdd(now, -i), a = A(+ym.slice(0, 4)), m = +ym.slice(5, 7); if (!(a.total[m] > 0)) continue;
+    const bg = live('tx').filter(t => t.date && t.date.slice(0, 7) === ym && (a.bm.get(t.cat) || '변동') === '특별' && (+t.amount || 0) >= FLOW_BIG); big.push(...bg);
+    recent.push({ ym, life: a.life[m], other: Math.max(0, a.blk.특별[m] - ann(m) - bg.reduce((s, t) => s + (+t.amount || 0), 0)), sav: a.sav[m] });
+  }
   const avg = k => recent.length ? Math.round(recent.reduce((s, r) => s + r[k], 0) / recent.length / 1e5) * 1e5 : 0;
-  return { now, ann, recent, auto: { life: avg('life'), other: avg('other'), sav: avg('sav') } };
+  return { now, ann, recent, big, auto: { life: avg('life'), other: avg('other'), sav: avg('sav') } };
 }
 function flowWork(now) {
   if (!work) return null;
@@ -1263,7 +1268,7 @@ VIEWS.cash = () => {
       <div class="flow-asm">
         ${asm('newinc', '월 새 사건 입금', '최근 12개월 월평균 입금', `아직 수임하지 않은 사건에서 들어올 돈. 예상 종결이 잡힌 마지막 달(${lastExp ? mlab(lastExp) : '없음'}) 다음 달부터 넣음`)}
         ${asm('life', '월 생활지출 (고정+변동)', '최근 3개월 평균', `${recOf('life')} · 예산 ${man(doc.meta.budget)}`)}
-        ${asm('other', '월 그 밖의 특별비용', '최근 3개월 평균', `특별지출 중 연간예상에 없는 것(여행·사업비용·미예상 등): ${recOf('other')}`)}
+        ${asm('other', '월 그 밖의 특별비용', '최근 3개월 평균', `특별지출 중 연간예상에 없는 것(여행·사업비용·미예상 등): ${recOf('other')}${B.big.length ? `<br>한 번에 ${man(FLOW_BIG)}원 넘는 일회성 지출은 뺌: ${B.big.map(t => `${+t.date.slice(5, 7)}월 ${esc(t.place || '')} ${esc(t.memo || t.cat || '')} ${man(+t.amount)}`).join(', ')}` : ''}`)}
         ${asm('sav', '월 저축·투자', '최근 3개월 평균', recOf('sav'))}
       </div>
     </div>
