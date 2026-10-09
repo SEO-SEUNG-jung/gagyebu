@@ -226,6 +226,17 @@ dialog::backdrop{background:rgba(10,15,25,.45)}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;z-index:99;max-width:calc(100vw - 32px)}
 #toast.show{opacity:1;transform:translateX(-50%)}
 .help{color:var(--muted);font-size:13px;line-height:1.7}
+/* 자금계획 탭 */
+.flow-asm{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media (max-width:1200px){.flow-asm{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:800px){.flow-asm{grid-template-columns:1fr}}
+.flow-asm input.cell{width:100%;font-size:15px;padding:6px 8px}
+table.grid.fit.flow{min-width:720px}
+table.grid.fit.flow tr.blk td{font-weight:700;color:var(--muted);background:transparent;padding-top:10px}
+table.grid.fit.flow th small{font-weight:400}
+.fl-m{padding:8px 0;border-bottom:1px solid var(--line)}
+.fl-m:last-child{border-bottom:none}
+.fl-m ul{margin:4px 0 0;padding-left:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:2px 16px;font-size:13px}
 .help b{color:var(--text)}
 .help ol,.help ul{padding-left:20px;margin:6px 0}
 @media (max-width:800px){
@@ -269,7 +280,7 @@ dialog::backdrop{background:rgba(10,15,25,.45)}
 /* ====================== 기본 상수 · 유틸 ====================== */
 const K_DOC = 'gagyebu.doc', K_DIRTY = 'gagyebu.dirty', K_FILE = 'gagyebu.file', K_TAB = 'gagyebu.tab', K_YEAR = 'gagyebu.year';
 const COLS = ['tx', 'fixed', 'savings', 'assets', 'monthEnd', 'annual', 'plan', 'telecom'];
-const TABS = [['dash', '대시보드'], ['asset', '자산부채'], ['tx', '지출내역'], ['fixed', '고정비'], ['month', '월별요약'], ['daily', '일별추이'], ['annual', '연간예상'], ['tel', '통신비'], ['set', '설정']];
+const TABS = [['dash', '대시보드'], ['cash', '자금계획'], ['asset', '자산부채'], ['tx', '지출내역'], ['fixed', '고정비'], ['month', '월별요약'], ['daily', '일별추이'], ['annual', '연간예상'], ['tel', '통신비'], ['set', '설정']];
 const BLOCKS = [['고정', 'Ⅰ. 고정지출'], ['변동', 'Ⅱ. 변동지출'], ['특별', 'Ⅲ. 특별·기타']];
 const BLOCK_SUB = { 고정: '고정비', 변동: '변동비', 특별: '특별·기타' };
 const DOW = '일월화수목금토';
@@ -1158,6 +1169,110 @@ function editAsset(id, side) {
 }
 
 /* ====================== 화면: 연간예상 ====================== */
+/* ====================== 화면: 자금계획 (2026-10-09) ======================
+   이번 달부터 6개월, 달마다 들어올 돈·나갈 돈·남는 돈(모자라는 돈)과 대출 잔액이 어디로 가는지 미리 봄.
+   들어올 돈 = 업무관리의 입금 안 된 청구(사건의 예상 종결년월. 지난 달·종결 후 입금 대기는 이번 달로) + 직접 넣는 기타 수입
+   나갈 돈 = 생활지출(고정+변동) + 연간예상 특별비용(그 달 항목) + 그 밖의 특별비용 + 저축·투자 + 직접 넣는 기타 지출
+   가정값(생활지출·그 밖의 특별비용·저축·투자)은 비워 두면 최근 3개월 실제 평균을 씀.
+   저장: meta.flow = { life, other, sav (비우면 null = 자동), inc: {'YYYY-MM': 금액}, out: {'YYYY-MM': 금액} } */
+const FLOW_N = 6;
+const ymAdd = (ym, n) => { const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 1 + n, 1); return d.getFullYear() + '-' + pad(d.getMonth() + 1); };
+function flowBase() {
+  const now = todayStr().slice(0, 7), cache = {}, A = y => cache[y] || (cache[y] = compute(y));
+  const ann = m => live('annual').filter(r => +r.month === m).reduce((s, r) => s + (+(r.cur || r.prev) || 0), 0);
+  const recent = []; // 이번 달 전까지 가계부 기록이 있는 가장 최근 3개월
+  for (let i = 1; i <= 24 && recent.length < 3; i++) { const ym = ymAdd(now, -i), a = A(+ym.slice(0, 4)), m = +ym.slice(5, 7); if (a.total[m] > 0) recent.push({ ym, life: a.life[m], other: Math.max(0, a.blk.특별[m] - ann(m)), sav: a.sav[m] }); }
+  const avg = k => recent.length ? Math.round(recent.reduce((s, r) => s + r[k], 0) / recent.length / 1e5) * 1e5 : 0;
+  return { now, ann, recent, auto: { life: avg('life'), other: avg('other'), sav: avg('sav') } };
+}
+function flowWork(now) {
+  if (!work) return null;
+  const by = {}, none = [];
+  for (const c of work.cases || []) for (const b of c.billings || []) {
+    const t = (+b.fee || 0) + (+b.vat || 0) + (+b.extra || 0);
+    if (b.paidDate || !t) continue;
+    const open = c.stage !== '종결(수수료 입금)';
+    let k = open ? (c.expectedClose || '') : now;
+    if (!k) { none.push({ c, t }); continue; }
+    const late = open && k < now; if (k < now) k = now;
+    (by[k] = by[k] || { sum: 0, items: [] }); by[k].sum += t; by[k].items.push({ c, t, late, wait: !open });
+  }
+  const from = ymAdd(now, -12); let paid = 0; // 최근 12개월(이번 달 전까지) 월평균 사업 입금 → 앞으로 수임할 사건 입금 가정값
+  for (const c of work.cases || []) for (const b of c.billings || []) { const p = String(b.paidDate || '').slice(0, 7); if (p && p >= from && p < now) paid += (+b.fee || 0) + (+b.vat || 0) + (+b.extra || 0); }
+  return { by, none, avg12: Math.round(paid / 12 / 1e5) * 1e5 };
+}
+VIEWS.cash = () => {
+  const B = flowBase(), F = doc.meta.flow || {}, W = flowWork(B.now);
+  const auto = Object.assign({ newinc: W ? W.avg12 : 0 }, B.auto);
+  const val = k => F[k] == null || F[k] === '' ? auto[k] : +F[k];
+  const months = [...Array(FLOW_N).keys()].map(i => ymAdd(B.now, i));
+  // 앞으로 수임할 사건 입금(가정)은 예상 종결이 잡힌 마지막 달 다음부터 넣음(그 전 달은 이미 잡힌 사건 입금과 겹치지 않게)
+  const lastExp = W ? Object.keys(W.by).sort().pop() || '' : '';
+  const loanNow = live('assets').filter(r => r.side === '부채' && r.group === '대출').reduce((s, r) => s + (+r.amount || 0), 0), liq = liquidity();
+  let cum = 0;
+  const R = months.map(ym => {
+    const m = +ym.slice(5, 7), biz = W ? (W.by[ym] ? W.by[ym].sum : 0) : 0, nw = ym > lastExp ? val('newinc') : 0, inc2 = +((F.inc || {})[ym] || 0), out2 = +((F.out || {})[ym] || 0);
+    const life = val('life'), ann = B.ann(m), other = val('other'), sav = val('sav');
+    const inSum = biz + nw + inc2, outSum = life + ann + other + sav + out2, diff = inSum - outSum; cum += diff;
+    return { ym, biz, nw, inc2, life, ann, other, sav, out2, inSum, outSum, diff, cum, loan: Math.max(0, loanNow - cum) };
+  });
+  const last = R[R.length - 1], short = R.filter(r => r.diff < 0), worst = R.reduce((a, r) => r.diff < a.diff ? r : a, R[0]);
+  const dry = R.find(r => r.cum < 0 && -r.cum > liq.liquid); // 모자라는 돈이 쓸 수 있는 돈(예금+현금+마이너스통장 남은 한도)을 넘는 첫 달
+  const mlab = ym => `${ym.slice(0, 4) !== B.now.slice(0, 4) ? `${ym.slice(2, 4)}년 ` : ''}${+ym.slice(5, 7)}월`;
+  const sgn = v => `<span class="${v < 0 ? 'neg' : 'pos'}">${v < 0 ? '−' : '+'}${won(Math.abs(v))}</span>`;
+  const tot = k => R.reduce((s, r) => s + r[k], 0);
+  const row = (label, k, opt = {}) => `<tr class="${opt.cls || ''}"><td>${label}</td>${R.map(r => `<td class="num">${opt.fmt ? opt.fmt(r[k], r) : dash(r[k])}</td>`).join('')}<td class="num">${opt.noTot ? '' : opt.fmt ? opt.fmt(tot(k)) : dash(tot(k))}</td></tr>`;
+  const inRow = (label, k) => `<tr><td>${label}</td>${R.map(r => `<td class="num"><input class="cell" data-flow="${k}:${r.ym}" value="${r[k === 'inc' ? 'inc2' : 'out2'] ? won(r[k === 'inc' ? 'inc2' : 'out2']) : ''}" placeholder="0" inputmode="numeric"></td>`).join('')}<td class="num">${dash(tot(k === 'inc' ? 'inc2' : 'out2'))}</td></tr>`;
+  const rec = B.recent.map(r => +r.ym.slice(5, 7) + '월').reverse().join('·');
+  const recOf = k => B.recent.slice().reverse().map(r => `${+r.ym.slice(5, 7)}월 ${man(r[k])}`).join(' · ');
+  const asm = (k, label, avgLabel, note) => `<label class="field"><span>${label}</span><input class="cell" data-flow="${k}" value="${F[k] == null || F[k] === '' ? '' : won(F[k])}" placeholder="${won(auto[k])}" inputmode="numeric"><small class="muted">${F[k] == null || F[k] === '' ? `${avgLabel} ${won(auto[k])}원을 쓰는 중` : `직접 넣은 값 · 비우면 ${avgLabel} ${won(auto[k])}원`}${note ? '<br>' + note : ''}</small></label>`;
+  const detail = W ? months.filter(ym => W.by[ym]).map(ym => `<div class="fl-m"><b>${mlab(ym)}</b> <span class="muted">${W.by[ym].items.length}건 · ${won(W.by[ym].sum)}원</span><ul>${W.by[ym].items.sort((a, b) => b.t - a.t).map(x => `<li>${esc(x.c.name || '(이름 없음)')} <b>${won(x.t)}</b>${x.wait ? ' <span class="pill">종결 · 입금 대기</span>' : x.late ? ` <span class="pill warn">예상 ${esc(x.c.expectedClose)} 지남 → 이번 달로</span>` : ''}</li>`).join('')}</ul></div>`).join('') : '';
+  const after = W ? Object.keys(W.by).filter(k => k > months[months.length - 1]) : [];
+  return `<div class="kpis">
+      <div class="kpi"><div class="l">지금 대출 잔액 (「대출」 묶음)</div><div class="v">${man(loanNow)}</div><div class="s">자산부채 기준</div></div>
+      <div class="kpi"><div class="l">${mlab(last.ym)} 말 대출 잔액 예상</div><div class="v ${last.cum < 0 ? 'neg' : 'pos'}">${man(last.loan)}</div><div class="s">지금보다 ${last.cum < 0 ? man(-last.cum) + ' 늘어남' : man(last.cum) + ' 줄어듦'}</div></div>
+      <div class="kpi"><div class="l">모자라는 달</div><div class="v ${short.length ? 'neg' : 'pos'}">${short.length}<span class="muted" style="font-size:14px"> / ${FLOW_N}개월</span></div><div class="s">${worst.diff < 0 ? `가장 빠듯한 달 ${mlab(worst.ym)} ${sgn(worst.diff)}` : '모든 달이 남음'}</div></div>
+      <div class="kpi"><div class="l">지금 쓸 수 있는 돈</div><div class="v">${man(liq.liquid)}</div><div class="s">예금+현금+마이너스통장 남은 한도</div></div>
+    </div>
+    ${dry ? `<div class="notice" style="margin-bottom:16px"><b>⚠ 이대로면 ${mlab(dry.ym)}에 모자라는 돈(누적 ${won(-dry.cum)}원)이 지금 쓸 수 있는 돈(${won(liq.liquid)}원)보다 커집니다.</b> 지출을 줄이거나 수금을 앞당겨야 하는 시점입니다.</div>` : ''}
+    ${W ? '' : `<div class="notice" style="margin-bottom:16px">업무관리 데이터를 아직 불러오지 못해 사업 입금 예정이 0원으로 계산됩니다. 휴대폰·인터넷 주소에서는 자동으로 읽고, PC에서는 이 PC에서 업무관리를 한 번 열면 보입니다. <button class="sm" data-act="workReload">다시 불러오기</button></div>`}
+    <div class="card"><h2>앞으로 ${FLOW_N}개월 돈 흐름 <small>원 단위 · 칸에 직접 넣는 곳은 기타 수입·기타 지출</small></h2>
+      <div class="tablewrap"><table class="grid fit mid flow"><colgroup><col style="width:17%">${months.map(() => '<col>').join('')}<col style="width:12%"></colgroup>
+        <thead><tr><th>구분</th>${months.map(ym => `<th class="num">${mlab(ym)}</th>`).join('')}<th class="num">${FLOW_N}개월 합계</th></tr></thead>
+        <tbody>
+          <tr class="blk"><td colspan="${FLOW_N + 2}">들어올 돈</td></tr>
+          ${row('사업 입금 예정 <small class="muted">업무관리</small>', 'biz')}
+          ${row('새 사건 입금 <small class="muted">가정</small>', 'nw')}
+          ${inRow('기타 수입 <small class="muted">직접 입력</small>', 'inc')}
+          ${row('들어올 돈 합계', 'inSum', { cls: 'tot' })}
+          <tr class="blk"><td colspan="${FLOW_N + 2}">나갈 돈</td></tr>
+          ${row('생활지출 (고정+변동)', 'life')}
+          ${row('연간예상 특별비용', 'ann')}
+          ${row('그 밖의 특별비용', 'other')}
+          ${row('저축·투자', 'sav')}
+          ${inRow('기타 지출 <small class="muted">추가 상환 등</small>', 'out')}
+          ${row('나갈 돈 합계', 'outSum', { cls: 'tot' })}
+          <tr class="blk"><td colspan="${FLOW_N + 2}">결과</td></tr>
+          ${row('그 달 남는 돈', 'diff', { fmt: v => sgn(v) })}
+          ${row('누적', 'cum', { fmt: v => sgn(v), noTot: true })}
+          ${row('대출 잔액 예상', 'loan', { noTot: true, cls: 'tot' })}
+        </tbody></table></div>
+      <p class="help" style="margin:8px 0 0">대출 잔액 예상 = 지금 대출 잔액 − 누적 남는 돈 (남으면 갚고, 모자라면 대출로 메운다고 볼 때). 이자비용·할부금은 생활지출(고정)에, 부가세·종합소득세는 연간예상에 이미 들어 있습니다.</p>
+    </div>
+    <div class="card"><h2>가정값 <small>비워 두면 실제 평균을 씀 · 매달 같은 금액으로 계산 · 칸에 금액을 넣으면 그 값으로 바뀜</small></h2>
+      <div class="flow-asm">
+        ${asm('newinc', '월 새 사건 입금', '최근 12개월 월평균 입금', `아직 수임하지 않은 사건에서 들어올 돈. 예상 종결이 잡힌 마지막 달(${lastExp ? mlab(lastExp) : '없음'}) 다음 달부터 넣음`)}
+        ${asm('life', '월 생활지출 (고정+변동)', '최근 3개월 평균', `${recOf('life')} · 예산 ${man(doc.meta.budget)}`)}
+        ${asm('other', '월 그 밖의 특별비용', '최근 3개월 평균', `특별지출 중 연간예상에 없는 것(여행·사업비용·미예상 등): ${recOf('other')}`)}
+        ${asm('sav', '월 저축·투자', '최근 3개월 평균', recOf('sav'))}
+      </div>
+    </div>
+    <div class="card"><h2>사업 입금 예정 내역 <small>업무관리의 입금 안 된 청구 · 사건의 예상 종결년월 기준 · 부가세 포함</small></h2>
+      ${W ? (detail || '<p class="muted">앞으로 6개월 안에 들어올 입금 예정이 없습니다.</p>') : '<p class="muted">업무관리 데이터를 불러오면 보입니다.</p>'}
+      ${W && W.none.length ? `<div class="notice" style="margin-top:10px">예상 종결년월이 비어 있는 ${W.none.length}건(${won(W.none.reduce((s, x) => s + x.t, 0))}원)은 계산에서 뺐습니다: ${W.none.map(x => esc(x.c.name || '')).join(', ')}. 업무관리 사건 상세에서 예상 종결년월을 넣으면 들어갑니다.</div>` : ''}
+      ${after.length ? `<p class="help">${FLOW_N}개월 뒤 예정: ${after.sort().map(k => `${k} ${won(W.by[k].sum)}원`).join(', ')}</p>` : ''}
+    </div>`;
+};
 VIEWS.annual = () => {
   const Y = ui.year, rows = live('annual'), now = new Date(), curM = now.getFullYear() === Y ? now.getMonth() + 1 : 0;
   const byM = Array(13).fill(0); for (const r of rows) byM[+r.month || 0] += +r.cur || 0;
@@ -1376,6 +1491,11 @@ main.addEventListener('change', e => {
     if (!r) { if (col === 'monthEnd') r = { id, ym: id.slice(3) }; else if (col === 'savings') r = { id, ym: id.slice(2, 9), item: id.slice(10), amount: 0 }; else return; }
     const raw = el.value.trim();
     put(col, Object.assign({}, r, { [field]: raw === '' && col === 'monthEnd' ? '' : num(raw) }));
+    commit(); return;
+  }
+  if (el.dataset.flow) { // 자금계획: 가정값(life·other·sav) 또는 달별 기타 수입·지출(inc:YYYY-MM, out:YYYY-MM)
+    const [k, ym] = el.dataset.flow.split(':'), raw = el.value.trim();
+    setMeta(m => { const f = m.flow = Object.assign({ inc: {}, out: {} }, m.flow); if (ym) { f[k] = Object.assign({}, f[k]); if (!num(raw)) delete f[k][ym]; else f[k][ym] = num(raw); } else f[k] = raw === '' ? null : num(raw); });
     commit(); return;
   }
   if (el.dataset.meta) { const k = el.dataset.meta, v = num(el.value); setMeta(m => { m[k] = v; }); if (k === 'year' && v) { ui.year = v; lsSet(K_YEAR, v); renderYear(); } commit(); return; }
