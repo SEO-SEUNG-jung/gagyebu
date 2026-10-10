@@ -1137,7 +1137,8 @@ VIEWS.asset = () => {
     <div class="card"><h2>④ 월말 순자산 추이 <small>${Y}년 · 매월 말에 기록</small></h2>
       <div class="toolbar"><button class="primary" data-act="snap" data-m="${curM}">현재 잔액으로 ${curM}월 말 기록</button><span class="hint">위 ②③의 합계를 그대로 ${curM}월 칸에 넣습니다.</span></div>
       ${lineChart(pts)}
-      <div class="tablewrap"><table class="grid compact sticky-first fit trend"><colgroup><col style="width:8%">${M.map(() => `<col>`).join("")}</colgroup><thead><tr><th>구분</th>${M.map(m => `<th>${m}월</th>`).join('')}</tr></thead><tbody>${trend}</tbody></table></div></div>`;
+      <div class="tablewrap"><table class="grid compact sticky-first fit trend"><colgroup><col style="width:8%">${M.map(() => `<col>`).join("")}</colgroup><thead><tr><th>구분</th>${M.map(m => `<th>${m}월</th>`).join('')}</tr></thead><tbody>${trend}</tbody></table></div></div>
+    ${loanCard()}`;
 };
 function liquidityCard() {
   const q = liquidity(), c = q.cardNow;
@@ -1157,10 +1158,53 @@ function assetMemo(r) {
   const bal = `잔액 ${won(num(lim[1]) - (+r.amount || 0))}`;
   return /잔액\s*-?[\d,]+/.test(memo) ? memo.replace(/잔액\s*-?[\d,]+/, bal) : `${memo} · ${bal}`;
 }
+/* ---- 대출 상환 계획 (2026-10-11) ----
+   부채 항목에 rate(연 금리 %, 글자), pay(월 상환액 = 원금+이자), kind(상환 방식), due(만기 YYYY-MM)를 둠(빈 칸이면 계산에서 「정보 필요」).
+   월 이자 = 잔액 × 금리 ÷ 12. 원리금 상환은 월 상환액 − 이자만큼 원금이 줄고, 이자만·마이너스통장은 원금이 그대로(마이너스통장·이자 없음에 월 상환액을 넣으면 그만큼 갚는 것으로 봄).
+   연말 잔액 = 다음 달부터 12월까지 매달 갚는다고 볼 때. 목표 잔액은 meta.loanGoal(비우면 표시 안 함). */
+const LOAN_KINDS = [['', '선택'], ['원리금', '원리금 상환 (매달 원금+이자)'], ['이자만', '이자만 내고 만기에 한꺼번에'], ['마이너스', '마이너스통장'], ['무이자', '이자 없음']];
+const LOAN_DEFS = [{ k: 'rate', label: '연 금리 (%, 예: 5.2)' }, { k: 'pay', label: '월 상환액 (원금+이자)', type: 'num' }, { k: 'kind', label: '상환 방식', type: 'select', options: LOAN_KINDS }, { k: 'due', label: '만기 (예: 2028-05)' }];
+function loanStep(L, bal) { // 한 달 뒤: [이자, 원금, 남은 잔액]
+  const r = (parseFloat(L.rate) || 0) / 100 / 12, it = L.kind === '무이자' ? 0 : Math.round(bal * r), pay = +L.pay || 0;
+  const pr = L.kind === '원리금' || L.kind === '마이너스' || L.kind === '무이자' ? Math.max(0, Math.min(bal, pay - it)) : 0;
+  return [it, pr, bal - pr];
+}
+function loanPlan() {
+  const now = new Date(), left = 11 - now.getMonth(); // 다음 달부터 12월까지 갚는 횟수
+  const loans = live('assets').filter(r => r.side === '부채' && r.group === '대출').map(L => {
+    const bal = +L.amount || 0, ok = !!L.kind, [it, pr] = loanStep(L, bal);
+    let b = bal; for (let i = 0; i < left; i++) b = loanStep(L, b)[2];
+    let end = ''; if (pr > 0) { let x = bal, n = 0; while (x > 0 && n < 600) { x = loanStep(L, x)[2]; n++; } const d = new Date(now.getFullYear(), now.getMonth() + n, 1); end = n >= 600 ? '' : d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+    return { L, bal, ok, it, pr, pay: it + pr, yearEnd: b, end, rate: parseFloat(L.rate) || 0 };
+  });
+  const sum = k => loans.reduce((s, x) => s + x[k], 0);
+  return { loans, left, it: sum('it'), pr: sum('pr'), pay: sum('pay'), bal: sum('bal'), yearEnd: sum('yearEnd'), need: loans.filter(x => !x.ok) };
+}
+function loanCard() {
+  const P = loanPlan(), goal = doc.meta.loanGoal ? +doc.meta.loanGoal : 0, Y = new Date().getFullYear();
+  const A = compute(Y), cm = new Date().getMonth() + 1, iv = [cm - 1, cm - 2, cm - 3].filter(m => m >= 1).map(m => (A.byCat.get('이자비용') || [])[m] || 0).filter(v => v > 0);
+  const ledgerIt = iv.length ? Math.round(iv.reduce((a, b) => a + b, 0) / iv.length) : 0;
+  const kindL = k => (LOAN_KINDS.find(x => x[0] === k) || ['', ''])[1].replace(/ \(.*\)$/, '');
+  const rows = P.loans.slice().sort((a, b) => b.rate - a.rate).map(x => `<tr><td>${esc(x.L.name)}${x.ok ? '' : ' <span class="pill warn">정보 입력 필요</span>'}</td><td class="num">${x.L.rate ? esc(String(x.L.rate)) + '%' : '-'}</td><td>${x.ok ? esc(kindL(x.L.kind)) : '-'}</td><td class="num">${won(x.bal)}</td><td class="num">${dash(x.it)}</td><td class="num">${dash(x.pr)}</td><td class="num"><b>${won(x.yearEnd)}</b></td><td>${x.end ? `${x.end.slice(2, 4)}년 ${+x.end.slice(5)}월` : x.L.due ? `만기 ${esc(x.L.due)}` : '-'}</td><td><button class="sm" data-act="assetEdit" data-id="${esc(x.L.id)}">수정</button></td></tr>`).join('');
+  return `<div class="card" style="margin-top:16px"><h2>⑤ 대출 상환 계획 <small>「대출」 묶음 · 금리 높은 순 · 각 대출의 「수정」에서 금리·월 상환액·상환 방식·만기를 넣으세요</small></h2>
+    <div class="kpis">
+      <div class="kpi"><div class="l">한 달 이자 (예상)</div><div class="v">${won(P.it)}</div><div class="s">${ledgerIt ? `가계부 「이자비용」 최근 평균 ${won(ledgerIt)}` : '잔액 × 금리 ÷ 12'}</div></div>
+      <div class="kpi"><div class="l">한 달 상환액 (원금+이자)</div><div class="v">${won(P.pay)}</div><div class="s">그중 원금 ${won(P.pr)}</div></div>
+      <div class="kpi"><div class="l">올해 말 대출 잔액 (예상)</div><div class="v">${won(P.yearEnd)}</div><div class="s">다음 달부터 12월까지 ${P.left}번 갚을 때 · 지금 ${man(P.bal)}</div></div>
+      <div class="kpi"><div class="l">목표까지</div><div class="v ${goal && P.yearEnd > goal ? 'neg' : goal ? 'pos' : ''}">${goal ? (P.yearEnd > goal ? man(P.yearEnd - goal) + ' 더' : '달성 예상') : '-'}</div><div class="s"><input class="cell" data-meta="loanGoal" value="${goal ? won(goal) : ''}" placeholder="올해 말 목표 잔액" style="width:100%"></div></div>
+    </div>
+    ${P.need.length ? `<div class="notice" style="margin-bottom:10px">금리·상환 방식이 비어 있는 대출 ${P.need.length}개(${P.need.map(x => esc(x.L.name)).join(', ')})는 이자·원금이 0으로 계산됩니다. 「수정」에서 넣어 주세요.</div>` : ''}
+    <div class="tablewrap"><table class="grid fit mid wraptext"><colgroup><col style="width:20%"><col style="width:7%"><col style="width:12%"><col><col><col><col><col style="width:10%"><col style="width:50px"></colgroup>
+      <thead><tr><th>대출</th><th>금리</th><th>상환 방식</th><th>지금 잔액</th><th>월 이자</th><th>월 원금</th><th>올해 말 잔액</th><th>다 갚는 때</th><th></th></tr></thead>
+      <tbody>${rows}<tr class="tot"><td>합계</td><td></td><td></td><td class="num">${won(P.bal)}</td><td class="num">${won(P.it)}</td><td class="num">${won(P.pr)}</td><td class="num">${won(P.yearEnd)}</td><td></td><td></td></tr></tbody></table></div>
+    <p class="help" style="margin:8px 0 0">월 이자 = 잔액 × 금리 ÷ 12로 계산한 예상치입니다. 남는 돈으로 대출을 더 갚을 때는 금리가 높은 대출부터 갚으면 이자가 가장 많이 줄어듭니다(위 표 순서). 이자·할부금은 이미 지출내역의 고정비로 나가고 있어 자금계획 탭과 겹쳐 세지 않습니다.</p>
+  </div>`;
+}
 function editAsset(id, side) {
   const r = id ? doc.assets.find(a => a.id === id) : { side, group: '', name: '', amount: 0, memo: '' };
   const groups = [...new Set(live('assets').filter(a => a.side === r.side).map(a => a.group))];
-  const defs = [{ k: 'side', label: '자산/부채', type: 'select', options: ['자산', '부채'] }, { k: 'group', label: '묶음 (예: 예금, 대출)', list: 'dlAG' }, { k: 'name', label: '이름', req: 1 }, { k: 'amount', label: '금액', type: 'num' }, { k: 'memo', label: '메모', full: 1 }];
+  const defs = [{ k: 'side', label: '자산/부채', type: 'select', options: ['자산', '부채'] }, { k: 'group', label: '묶음 (예: 예금, 대출)', list: 'dlAG' }, { k: 'name', label: '이름', req: 1 }, { k: 'amount', label: '금액', type: 'num' }, { k: 'memo', label: '메모', full: 1 }]
+    .concat(r.side === '부채' ? LOAN_DEFS : []); // 대출 상환 계획용 칸(부채만)
   openModal({
     title: id ? '항목 수정' : `${side} 추가`, body: fields(defs, Object.assign({}, r, { memo: assetMemo(r) })) + `<datalist id="dlAG">${groups.map(g => `<option value="${esc(g)}">`).join('')}</datalist>`,
     onSubmit: f => { const v = readForm(f, defs); if (!v.name) { toast('이름을 입력하세요'); return false; } v.memo = assetMemo(v); put('assets', Object.assign({}, r, v, { id: id || uid() })); commit(); },
