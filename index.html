@@ -108,6 +108,9 @@ table.grid tr.sub td{background:var(--accent-soft);font-weight:700}
 table.grid tr.tot td{background:var(--panel-2);font-weight:700;border-top:2px solid var(--line-2)}
 table.grid tr.blk td{background:var(--panel-2);color:var(--accent);font-weight:700}
 table.grid tr.hl td{background:var(--warn-bg)}
+table.grid tr.paid td{color:var(--muted)}
+table.grid tr.paid td b{color:var(--muted)}
+.paidchk{display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;font-size:12px}
 table.grid tbody tr:hover td{background:var(--panel-2)}
 table.grid td.link{cursor:pointer}
 table.grid td.link:hover{text-decoration:underline;color:var(--accent-2)}
@@ -1327,15 +1330,16 @@ VIEWS.annual = () => {
   const byM = Array(13).fill(0); for (const r of rows) byM[+r.month || 0] += +r.cur || 0;
   const soon = m => curM && ((m - curM + 12) % 12 === 1 || (m - curM + 12) % 12 === 2);
   const strip = `<div class="months">${[...Array(12).keys()].map(i => i + 1).map(m => `<div class="mb ${m === curM ? 'now' : soon(m) ? 'soon' : ''}">${m}월${m === curM ? ' · 이번 달' : soon(m) ? ' · 다가옴' : ''}<b>${dash(byM[m])}</b></div>`).join('')}</div>`;
-  let last = null, tp = 0, tc = 0;
+  let last = null, tp = 0, tc = 0, tu = 0, np = 0;
   const body = rows.map(r => { tp += +r.prev || 0; tc += +r.cur || 0; const g = r.group !== last ? esc(r.group) : ''; last = r.group; const m = +r.month || 0;
-    return `<tr class="${m && (m === curM || soon(m)) ? 'hl' : ''}"><td><b>${g}</b></td><td>${esc(r.detail)}</td><td>${m ? m + '월' : '-'}</td><td class="num dim">${dash(r.prev)}</td><td class="num"><b>${dash(r.cur)}</b></td><td>${esc(r.type)}</td><td><button class="sm" data-act="annEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
+    const pd = (r.paid || {})[Y]; if (pd) np++; else tu += +r.cur || 0; // 납부 체크는 연도별 (2026-10-20 사용자 요청)
+    return `<tr class="${pd ? 'paid' : m && (m === curM || soon(m)) ? 'hl' : ''}"><td><b>${g}</b></td><td>${esc(r.detail)}</td><td>${m ? m + '월' : '-'}</td><td class="num dim">${dash(r.prev)}</td><td class="num"><b>${dash(r.cur)}</b></td><td>${esc(r.type)}</td><td><label class="paidchk" title="${Y}년 납부했으면 체크"><input type="checkbox" data-act="annPaid" data-id="${esc(r.id)}"${pd ? ' checked' : ''}>${pd ? `${+pd.slice(5, 7)}.${+pd.slice(8, 10)} 납부` : '미납'}</label></td><td><button class="sm" data-act="annEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
   const P = live('plan'); const sum = k => P.reduce((s, r) => s + (+r[k] || 0), 0);
   const pbody = P.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${dash(r.monthly)}</td><td class="num">${r.months || '-'}</td><td class="num">${dash(r.min)}</td><td class="num">${dash(r.mid)}</td><td class="num">${dash(r.max)}</td><td class="wrap muted">${esc(r.note)}</td><td><button class="sm" data-act="planEdit" data-id="${esc(r.id)}">수정</button></td></tr>`).join('');
   return `<div class="card"><h2>월별로 몰리는 비용 <small>${Y}년 기준액 합계 · 이번 달과 다음 두 달을 표시</small></h2>${strip}</div>
-    <div class="card"><h2>① 연간 예상 특별비용 <small>세금·회비·명절 용돈처럼 특정 달에 나가는 비용</small></h2>
+    <div class="card"><h2>① 연간 예상 특별비용 <small>세금·회비·명절 용돈처럼 특정 달에 나가는 비용 · 낸 항목은 「${Y}년 납부」를 체크</small></h2>
       <div class="toolbar"><button data-act="annAdd">+ 항목 추가</button></div>
-      <div class="tablewrap"><table class="grid fit mid wraptext"><colgroup><col style="width:13%"><col><col style="width:8%"><col style="width:13%"><col style="width:13%"><col style="width:14%"><col style="width:50px"></colgroup><thead><tr><th>구분</th><th>세부내역</th><th>발생월</th><th>${Y - 1}년</th><th>${Y}년</th><th>분류</th><th></th></tr></thead><tbody>${body}<tr class="tot"><td>합계</td><td></td><td></td><td class="num">${won(tp)}</td><td class="num">${won(tc)}</td><td></td><td></td></tr></tbody></table></div></div>
+      <div class="tablewrap"><table class="grid fit mid wraptext"><colgroup><col style="width:13%"><col><col style="width:8%"><col style="width:13%"><col style="width:13%"><col style="width:12%"><col style="width:11%"><col style="width:50px"></colgroup><thead><tr><th>구분</th><th>세부내역</th><th>발생월</th><th>${Y - 1}년</th><th>${Y}년</th><th>분류</th><th>${Y}년 납부</th><th></th></tr></thead><tbody>${body}<tr class="tot"><td>합계</td><td></td><td></td><td class="num">${won(tp)}</td><td class="num">${won(tc)}</td><td></td><td class="wrap" style="font-size:12px">납부 ${np}건 · 미납 ${won(tu)}원</td><td></td></tr></tbody></table></div></div>
     <div class="card"><h2>② 연간 지출계획 <small>최소 / 적정 / 최대</small></h2>
       <div class="toolbar"><button data-act="planAdd">+ 항목 추가</button></div>
       <div class="tablewrap"><table class="grid fit mid wraptext"><colgroup><col style="width:14%"><col style="width:12%"><col style="width:7%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col><col style="width:50px"></colgroup><thead><tr><th>구분</th><th>월지출</th><th>월수</th><th>최소</th><th>적정</th><th>최대</th><th>비고</th><th></th></tr></thead><tbody>${pbody}<tr class="tot"><td>합계</td><td></td><td></td><td class="num">${won(sum('min'))}</td><td class="num">${won(sum('mid'))}</td><td class="num">${won(sum('max'))}</td><td></td><td></td></tr></tbody></table></div></div>`;
@@ -1498,6 +1502,7 @@ const ACT = {
   fixEdit: b => editFixed(b.dataset.id), fixAdd: () => editFixed(null), fixBulk: () => bulkFixed(),
   assetEdit: b => editAsset(b.dataset.id), assetAdd: b => editAsset(null, b.dataset.side),
   snap: b => { const nw = netWorth(), ym = ymOf(ui.year, +b.dataset.m); const id = 'me-' + ym; const r = doc.monthEnd.find(x => x.id === id && !x.del); if (r && !confirm(`${+b.dataset.m}월 말 기록이 이미 있습니다. 현재 값으로 바꿀까요?`)) return; put('monthEnd', { id, ym, assets: nw.a, liabilities: nw.l }); commit(); toast(`${+b.dataset.m}월 말 순자산 ${won(nw.net)}원을 기록했습니다`); },
+  annPaid: b => { const r = doc.annual.find(a => a.id === b.dataset.id); if (!r) return; const paid = Object.assign({}, r.paid); if (b.checked) paid[ui.year] = todayStr(); else delete paid[ui.year]; put('annual', Object.assign({}, r, { paid })); commit(); },
   annEdit: b => editAnnual(b.dataset.id), annAdd: () => editAnnual(null), planEdit: b => editPlan(b.dataset.id), planAdd: () => editPlan(null),
   telEdit: b => editTel(b.dataset.id), telAdd: b => editTel(null, b.dataset.sec),
   catUp: b => { const i = +b.dataset.i; if (!i) return; setMeta(m => { const c = m.categories; [c[i - 1], c[i]] = [c[i], c[i - 1]]; }); commit(); },
