@@ -110,7 +110,8 @@ table.grid tr.blk td{background:var(--panel-2);color:var(--accent);font-weight:7
 table.grid tr.hl td{background:var(--warn-bg)}
 table.grid tr.paid td{color:var(--muted)}
 table.grid tr.paid td b{color:var(--muted)}
-.paidchk{display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;font-size:12px}
+.paidchk{display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;font-size:12px;padding:2px 8px 2px 4px;border-radius:999px}
+.paidchk.unpaid{background:color-mix(in srgb, var(--neg) 14%, transparent);color:var(--neg);font-weight:600}
 table.grid tbody tr:hover td{background:var(--panel-2)}
 table.grid td.link{cursor:pointer}
 table.grid td.link:hover{text-decoration:underline;color:var(--accent-2)}
@@ -1334,7 +1335,7 @@ VIEWS.annual = () => {
   let last = null, tp = 0, tc = 0, tu = 0, np = 0;
   const body = rows.map(r => { tp += +r.prev || 0; tc += +r.cur || 0; const g = r.group !== last ? esc(r.group) : ''; last = r.group; const m = +r.month || 0;
     const pd = (r.paid || {})[Y]; if (pd) np++; else tu += +r.cur || 0; // 납부 체크는 연도별 (2026-10-20 사용자 요청)
-    return `<tr class="${pd ? 'paid' : m && (m === curM || soon(m)) ? 'hl' : ''}"><td><b>${g}</b></td><td>${esc(r.detail)}</td><td>${m ? m + '월' : '-'}</td><td class="num dim">${dash(r.prev)}</td><td class="num"><b>${dash(r.cur)}</b></td><td>${esc(r.type)}</td><td><label class="paidchk" title="${Y}년 납부했으면 체크"><input type="checkbox" data-act="annPaid" data-id="${esc(r.id)}"${pd ? ' checked' : ''}>${pd ? '납부' : '미납'}</label></td><td><button class="sm" data-act="annEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
+    return `<tr class="${pd ? 'paid' : m && (m === curM || soon(m)) ? 'hl' : ''}"><td><b>${g}</b></td><td>${esc(r.detail)}</td><td>${m ? m + '월' : '-'}</td><td class="num dim">${dash(r.prev)}</td><td class="num"><b>${dash(r.cur)}</b></td><td>${esc(r.type)}</td><td><label class="paidchk${pd ? '' : ' unpaid'}" title="${Y}년 납부했으면 체크"><input type="checkbox" data-act="annPaid" data-id="${esc(r.id)}"${pd ? ' checked' : ''}>${pd ? '납부' : '미납'}</label></td><td><button class="sm" data-act="annEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
   const P = live('plan'); const sum = k => P.reduce((s, r) => s + (+r[k] || 0), 0);
   const pbody = P.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${dash(r.monthly)}</td><td class="num">${r.months || '-'}</td><td class="num">${dash(r.min)}</td><td class="num">${dash(r.mid)}</td><td class="num">${dash(r.max)}</td><td class="wrap muted">${esc(r.note)}</td><td><button class="sm" data-act="planEdit" data-id="${esc(r.id)}">수정</button></td></tr>`).join('');
   return `<div class="card"><h2>월별로 몰리는 비용 <small>${Y}년 기준액 합계 · 이번 달과 다음 두 달을 표시</small></h2>${strip}</div>
