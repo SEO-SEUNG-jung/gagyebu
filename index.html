@@ -778,15 +778,16 @@ function catVsAvgCard(Y, cm, curY) {
 }
 // ---- 대시보드 ④: 다가오는 큰 지출 (연간예상 이번 달·다음 달)
 function upcomingCard(Y, cm) {
-  const [, nm] = ymShift(Y, cm, 1);
-  const an = live('annual').filter(r => (+r.month === cm || +r.month === nm) && (+r.cur || +r.prev))
+  const [ny, nm] = ymShift(Y, cm, 1);
+  // 연간예상에서 그 해 「납부」 체크한 항목은 뺌 (2026-10-20 사용자 요청)
+  const an = live('annual').filter(r => (+r.month === cm || +r.month === nm) && (+r.cur || +r.prev) && !(r.paid || {})[+r.month === cm ? Y : ny])
     .map(r => ({ m: +r.month, name: [r.group, r.detail].filter(Boolean).join(' · '), amt: +r.cur || +r.prev }))
     .sort((a, b) => (a.m === cm ? 0 : 1) - (b.m === cm ? 0 : 1) || b.amt - a.amt);
   const sum = m => an.filter(r => r.m === m).reduce((a, r) => a + r.amt, 0);
   const line = r => `<div><span>${r.m === cm ? '이번 달' : r.m + '월'}</span><span class="m">${esc(r.name)}</span><b>${won(r.amt)}</b></div>`;
   return `<div class="card"><h2>④ 다가오는 큰 지출 <small>연간예상 · ${cm}월 ${won(sum(cm))}원 · ${nm}월 ${won(sum(nm))}원</small></h2>
     <div class="list-recent">${an.map(line).join('') || '<p class="muted">이번 달·다음 달에 예정된 비용이 없습니다.</p>'}</div>
-    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span class="help">${Y}년 기준액(없으면 전년) · 이미 냈다면 무시하세요</span><button class="link" data-act="go" data-tab="annual">연간예상 탭 보기 →</button></div></div>`;
+    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><span class="help">${Y}년 기준액(없으면 전년) · 연간예상에서 「납부」 체크한 항목은 빠짐</span><button class="link" data-act="go" data-tab="annual">연간예상 탭 보기 →</button></div></div>`;
 }
 VIEWS.dash = () => {
   const Y = ui.year, A = compute(Y), budget = +doc.meta.budget || 0, n = A.active.length;
@@ -1333,7 +1334,7 @@ VIEWS.annual = () => {
   let last = null, tp = 0, tc = 0, tu = 0, np = 0;
   const body = rows.map(r => { tp += +r.prev || 0; tc += +r.cur || 0; const g = r.group !== last ? esc(r.group) : ''; last = r.group; const m = +r.month || 0;
     const pd = (r.paid || {})[Y]; if (pd) np++; else tu += +r.cur || 0; // 납부 체크는 연도별 (2026-10-20 사용자 요청)
-    return `<tr class="${pd ? 'paid' : m && (m === curM || soon(m)) ? 'hl' : ''}"><td><b>${g}</b></td><td>${esc(r.detail)}</td><td>${m ? m + '월' : '-'}</td><td class="num dim">${dash(r.prev)}</td><td class="num"><b>${dash(r.cur)}</b></td><td>${esc(r.type)}</td><td><label class="paidchk" title="${Y}년 납부했으면 체크"><input type="checkbox" data-act="annPaid" data-id="${esc(r.id)}"${pd ? ' checked' : ''}>${pd ? `${+pd.slice(5, 7)}.${+pd.slice(8, 10)} 납부` : '미납'}</label></td><td><button class="sm" data-act="annEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
+    return `<tr class="${pd ? 'paid' : m && (m === curM || soon(m)) ? 'hl' : ''}"><td><b>${g}</b></td><td>${esc(r.detail)}</td><td>${m ? m + '월' : '-'}</td><td class="num dim">${dash(r.prev)}</td><td class="num"><b>${dash(r.cur)}</b></td><td>${esc(r.type)}</td><td><label class="paidchk" title="${Y}년 납부했으면 체크"><input type="checkbox" data-act="annPaid" data-id="${esc(r.id)}"${pd ? ' checked' : ''}>${pd ? '납부' : '미납'}</label></td><td><button class="sm" data-act="annEdit" data-id="${esc(r.id)}">수정</button></td></tr>`; }).join('');
   const P = live('plan'); const sum = k => P.reduce((s, r) => s + (+r[k] || 0), 0);
   const pbody = P.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${dash(r.monthly)}</td><td class="num">${r.months || '-'}</td><td class="num">${dash(r.min)}</td><td class="num">${dash(r.mid)}</td><td class="num">${dash(r.max)}</td><td class="wrap muted">${esc(r.note)}</td><td><button class="sm" data-act="planEdit" data-id="${esc(r.id)}">수정</button></td></tr>`).join('');
   return `<div class="card"><h2>월별로 몰리는 비용 <small>${Y}년 기준액 합계 · 이번 달과 다음 두 달을 표시</small></h2>${strip}</div>
