@@ -1095,7 +1095,17 @@ function bulkFixed() {
 
 /* ====================== 화면: 일별추이 ====================== */
 VIEWS.daily = () => {
-  const Y = ui.year, A = compute(Y), M = [...Array(12).keys()].map(i => i + 1);
+  const Y = ui.year, M = [...Array(12).keys()].map(i => i + 1);
+  // 대분류가 「변동」인 지출만 (2026-10-20 사용자 요청 — 예전엔 지출 전체). 대분류의 구분은 설정 탭 대분류 목록의 「고정/변동/특별」
+  const bm = blockMap(), z = () => Array(13).fill(0);
+  const A = { day: Array.from({ length: 32 }, z), undated: z(), dow: Array.from({ length: 7 }, z), total: z() };
+  for (const t of live('tx')) {
+    if (!t.date || t.date.slice(0, 4) !== String(Y)) continue;
+    const m = +t.date.slice(5, 7), a = +t.amount || 0; if (!(m >= 1 && m <= 12) || (bm.get(t.cat || '(분류 없음)') || '변동') !== '변동') continue;
+    A.total[m] += a; A.total[0] += a;
+    if (t.date.length >= 10) { const d = +t.date.slice(8, 10); A.day[d][m] += a; A.day[d][0] += a; const w = new Date(Y, m - 1, d).getDay(); A.dow[w][m] += a; A.dow[w][0] += a; }
+    else { A.undated[m] += a; A.undated[0] += a; }
+  }
   let mx = 0; for (let d = 1; d <= 31; d++) for (const m of M) mx = Math.max(mx, A.day[d][m]);
   const heat = v => v ? `background:rgba(var(--heat),${(0.08 + 0.55 * Math.sqrt(v / mx)).toFixed(2)})` : '';
   let body = '';
@@ -1104,9 +1114,9 @@ VIEWS.daily = () => {
   body += `<tr class="tot"><td>합계</td>${M.map(m => `<td class="num">${dash(A.total[m])}</td>`).join('')}<td class="num">${dash(A.total[0])}</td></tr>`;
   const order = [1, 2, 3, 4, 5, 6, 0]; const dowTot = order.reduce((s, w) => s + A.dow[w][0], 0);
   const dowRows = order.map(w => `<tr><td>${DOW[w]}요일</td>${M.map(m => `<td class="num ${A.dow[w][m] ? '' : 'dim'}">${dash(A.dow[w][m])}</td>`).join('')}<td class="num"><b>${dash(A.dow[w][0])}</b></td><td class="num">${pct(A.dow[w][0], dowTot)}</td></tr>`).join('');
-  return `<div class="card"><h2>① 일자별 총지출 <small>${Y}년 · 색이 진할수록 많이 쓴 날 · 누르면 그날 내역</small></h2>
+  return `<div class="card"><h2>① 일자별 변동지출 <small>${Y}년 · 대분류가 「변동」인 지출만 · 색이 진할수록 많이 쓴 날 · 누르면 그날 내역</small></h2>
     <div class="tablewrap"><table class="grid compact sticky-first fit"><colgroup><col style="width:6%">${M.map(() => `<col>`).join("")}<col style="width:9%"></colgroup><thead><tr><th>일</th>${M.map(m => `<th>${m}월</th>`).join('')}<th>합계</th></tr></thead><tbody>${body}</tbody></table></div></div>
-    <div class="card"><h2>② 요일별 지출</h2><div class="tablewrap"><table class="grid compact sticky-first fit"><colgroup><col style="width:7%">${M.map(() => `<col>`).join("")}<col style="width:9%"><col style="width:6%"></colgroup><thead><tr><th>요일</th>${M.map(m => `<th>${m}월</th>`).join('')}<th>합계</th><th>비중</th></tr></thead><tbody>${dowRows}</tbody></table></div></div>`;
+    <div class="card"><h2>② 요일별 변동지출</h2><div class="tablewrap"><table class="grid compact sticky-first fit"><colgroup><col style="width:7%">${M.map(() => `<col>`).join("")}<col style="width:9%"><col style="width:6%"></colgroup><thead><tr><th>요일</th>${M.map(m => `<th>${m}월</th>`).join('')}<th>합계</th><th>비중</th></tr></thead><tbody>${dowRows}</tbody></table></div></div>`;
 };
 
 /* ====================== 화면: 자산부채 ====================== */
