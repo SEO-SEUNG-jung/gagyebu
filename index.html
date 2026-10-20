@@ -877,7 +877,7 @@ function txFiltered() {
   const co = new Map(catList().map((c, i) => [c.name, i])), ci = t => co.has(t.cat) ? co.get(t.cat) : 1e9;
   const fx = t => t.sub === '고정비';
   return live('tx').filter(t => t.date && t.date.startsWith(Y)
-    && (!f.m.length || f.m.includes(String(+t.date.slice(5, 7)))) && (!f.cat.length || f.cat.includes(t.cat || '(분류 없음)')) && (!f.sub.length || f.sub.includes(t.sub || '(없음)')) && (!f.place.length || f.place.includes(t.place || '(없음)')) && (!f.memo.length || f.memo.includes(t.memo || '(없음)')) && (f.d !== 'und' || t.date.length < 10)
+    && (!f.m.length || f.m.includes(String(+t.date.slice(5, 7)))) && (!f.cat.length || f.cat.includes(t.cat || '(분류 없음)')) && (!f.sub.length || f.sub.includes(t.sub || '(없음)')) && (!f.place.length || f.place.includes(t.place || '(없음)')) && (!f.memo.length || f.memo.includes(t.memo || '(없음)')) && (f.d === 'und' ? t.date.length < 10 : !f.d || t.date === f.d)
     && (!q || [t.place, t.memo, t.cat, t.pay].some(x => String(x || '').toLowerCase().includes(q)) || String(t.amount).includes(q.replace(/,/g, ''))))
     .sort((a, b) => fx(b) - fx(a) || (fx(a) && (ci(a) - ci(b) || String(a.cat || '').localeCompare(String(b.cat || '')))) || a.date.localeCompare(b.date) || (a.upd || 0) - (b.upd || 0));
 }
@@ -906,7 +906,7 @@ VIEWS.tx = () => {
   <div class="card">
     <div class="filters tx-filters">
       ${msel('m', '월', ms.map(([v, l]) => [String(v), l]), '월', true)}
-      <select data-f="d">${opts([['und', '일자 미정만']], ui.f.d, '일자')}</select>
+      <select data-f="d">${opts([['und', '일자 미정만'], ...(ui.f.d && ui.f.d !== 'und' ? [[ui.f.d, dateLabel(ui.f.d) + '만']] : [])], ui.f.d, '일자')}</select>
       ${msel('place', '사용처', txValues('place').map(c => [c, c]), '사용처', false, true)}
       ${msel('memo', '내용', txValues('memo').map(c => [c, c]), '내용', false, true)}
       ${msel('cat', '대분류', catFilterList().map(c => [c, c]), '대분류')}
@@ -1510,7 +1510,7 @@ const ACT = {
   mselToggle: b => { const p = b.parentElement.querySelector('.msel-pop'); const open = p.hidden; mselCloseAll(p); p.hidden = !open; if (open) p.querySelector('.msel-search')?.focus(); },  mselClear: b => { const k = b.dataset.key; ui.f[k] = []; b.closest('.msel').querySelectorAll('input[data-mf]').forEach(c => { c.checked = false; }); mselRefresh(k); b.closest('.msel-pop').hidden = true; ui.limit = 1000; fillTxTable(); },
   csv: () => exportCsv(),
   goTx: b => { ui.f = { m: [String(+b.dataset.m)], cat: [b.dataset.cat], sub: [], place: [], memo: [], q: '' }; ui.limit = 1000; ui.tab = 'tx'; lsSet(K_TAB, 'tx'); renderTabs(); render(); window.scrollTo(0, 0); },
-  goDay: b => { ui.f = { m: [String(+b.dataset.m)], cat: catList().filter(c => c.block === '변동').map(c => c.name), /* 일별추이는 변동지출만이라 대분류 필터도 변동으로 (2026-10-20) */ sub: [], place: [], memo: [], q: '' }; ui.limit = 1000; ui.tab = 'tx'; renderTabs(); render(); const d = `${ui.year}-${pad(b.dataset.m)}-${pad(b.dataset.d)}`; const rows = txFiltered().filter(t => t.date === d); toast(`${dateLabel(d)} · ${rows.length}건 · ${won(rows.reduce((s, t) => s + (+t.amount || 0), 0))}원`); ui.f.q = ''; $('#txTable').querySelectorAll('tbody tr').forEach(tr => { if (tr.firstChild && tr.firstChild.textContent === dateLabel(d)) tr.classList.add('hl'); }); window.scrollTo(0, 0); },
+  goDay: b => { ui.f = { m: [String(+b.dataset.m)], cat: catList().filter(c => c.block === '변동').map(c => c.name), /* 일별추이는 변동지출만이라 대분류 필터도 변동으로, 일자도 그날만 (2026-10-20) */ d: `${ui.year}-${pad(b.dataset.m)}-${pad(b.dataset.d)}`, sub: [], place: [], memo: [], q: '' }; ui.limit = 1000; ui.tab = 'tx'; renderTabs(); render(); const d = `${ui.year}-${pad(b.dataset.m)}-${pad(b.dataset.d)}`; const rows = txFiltered().filter(t => t.date === d); toast(`${dateLabel(d)} · ${rows.length}건 · ${won(rows.reduce((s, t) => s + (+t.amount || 0), 0))}원`); ui.f.q = ''; $('#txTable').querySelectorAll('tbody tr').forEach(tr => { if (tr.firstChild && tr.firstChild.textContent === dateLabel(d)) tr.classList.add('hl'); }); window.scrollTo(0, 0); },
   fixEdit: b => editFixed(b.dataset.id), fixAdd: () => editFixed(null), fixBulk: () => bulkFixed(),
   assetEdit: b => editAsset(b.dataset.id), assetAdd: b => editAsset(null, b.dataset.side),
   snap: b => { const nw = netWorth(), ym = ymOf(ui.year, +b.dataset.m); const id = 'me-' + ym; const r = doc.monthEnd.find(x => x.id === id && !x.del); if (r && !confirm(`${+b.dataset.m}월 말 기록이 이미 있습니다. 현재 값으로 바꿀까요?`)) return; put('monthEnd', { id, ym, assets: nw.a, liabilities: nw.l }); commit(); toast(`${+b.dataset.m}월 말 순자산 ${won(nw.net)}원을 기록했습니다`); },
